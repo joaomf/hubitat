@@ -29,8 +29,9 @@ metadata {
 		capability "Switch Level"
 		capability "Sensor"
         capability "Battery"
-
-		command "pause"
+        capability "Light" //GH
+        
+		command "pause" 
 		command "levelOpenClose"
         command "presetPosition"
         
@@ -144,6 +145,11 @@ log.debug description
                         	sendEvent([name:"windowShade", value: (pos == 100 ? "open":"closed"), displayed: true])
                         }
                         sendEvent(name: "level", value: (pos))
+                    
+                        //To enable in GoggleHome
+                        if (pos < 100){ sendEvent(name: "switch", value: "on")}
+                        else {sendEvent(name: "switch", value: "off")}
+                        
                         break
                     default: log.debug "abnormal case : $dp" 
                         break
@@ -180,12 +186,20 @@ def setLevel(data, rate = null) {
     	sendEvent(name: "level", value: currentLevel, displayed: true)
         return
     }
-	sendTuyaCommand("0202", "00", "04000000"+zigbee.convertToHexString(data, 2))
+	sendTuyaCommand("0202", "00", "04000000"+zigbee.convertToHexString(data.intValue(), 2))
 }
 
 def refresh() {
 	zigbee.readAttribute(CLUSTER_TUYA, 0x00, )
 }
+
+//mc new for HE Commands
+def setPosition(position){
+    log.info "setLevel("+$position+")"
+    //setLevel(data = position, rate = null)
+    setLevel(position)
+}
+//mc
 
 def presetPosition() {
     setLevel(preset ?: 50)
@@ -217,3 +231,6 @@ private sendTuyaCommand(dp, fn, data) {
 private rand(n) {
 	return (new Random().nextInt(n))
 }
+
+def on (){log.warn "$device - some thing thinks im a switch  and is turning me on"}
+def off () {log.warn "$device - some thing thinks im a switch and is turning me off"}
