@@ -4,8 +4,8 @@
     Changes:
         - 09/26/19 Update nname and fingerprint from @aruffell
         - 09/27/19 Fix typo for reporting, and update fingerprint order, fix whitespace
-        - Adapted to Zemismart Power Smart Plug by Joao
-        -
+        - Adapted to Zemismart Power Smart Plug by Joao (@joaomf)
+        - https://github.com/joaomf/hubitat/edit/master/Zemismart%20Power%20Meter%20Smart%20Plug.groovy
 */
 
 import groovy.transform.Field
