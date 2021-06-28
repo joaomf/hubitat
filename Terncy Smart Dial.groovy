@@ -18,13 +18,13 @@
  *
  *  Version Author              Note
  *  0.1     G.Brown (MorkOz)    Initial release
- *
+ *  0.1     Joao.MF (joaomf)    Terncy Smart Dial version
  */
 
 import hubitat.zigbee.zcl.DataType
 
 metadata {
-    definition (name: "Terncy Smart Dial", namespace: "gbrown", author: "G.Brown") {
+    definition (name: "Terncy Smart Dial", namespace: "joaomf", author: "Joao.MF") {
     capability "Actuator"
     capability "PushableButton"
     capability "HoldableButton"
