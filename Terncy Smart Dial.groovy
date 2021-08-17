@@ -165,9 +165,12 @@ def parse(String description) {
                 short valueParsed = zigbee.convertHexToInt(parsedMap.value)
                 //log.debug("Valor: '$valueParsed'")
                 def lado = {0 < valueParsed ? "Direita" : "Esquerda"}
-                def pontos = state.lastLevel + (valueParsed / 12) * multiplier
+                                                                    //(multiplier as integer) -> se der erro na linha abaixo
+                def pontos = state.lastLevel + (valueParsed / 12) * multiplier 
+                             //(minLevel as integer) -> se der erro na linha abaixo
                 if (pontos < minLevel) { 
                     pontos = minLevel
+                             //(maxLevel as integer) -> se der erro na linha abaixo
                 } else if (pontos > maxLevel) {
                     pontos = maxLevel
                 }    
