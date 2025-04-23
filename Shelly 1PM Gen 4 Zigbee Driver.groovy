@@ -33,7 +33,7 @@ metadata {
         name: "Shelly 1PM Gen 4 Zigbee Driver",
         namespace: "hubitat",
         author: "Manus",
-        importUrl: ""
+        importUrl: "https://raw.githubusercontent.com/joaomf/hubitat/refs/heads/master/Shelly%201PM%20Gen%204%20Zigbee%20Driver.groovy"
     ) {
         // Capabilities básicas
         capability "Actuator"        // Permite que o dispositivo seja controlado
