@@ -150,7 +150,7 @@ def configure() {
     
     def interval = reportingInterval ? reportingInterval : 60
     def minInterval = 10
-    def maxInterval = interval
+    def maxInterval = interval as Integer //convertendo explicitamente para Integer
     
     def cmds = []
     
