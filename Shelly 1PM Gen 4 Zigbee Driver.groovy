@@ -17,8 +17,9 @@
  *
  * Copyright 2025
  * Licenciado sob a Licença Apache, Versão 2.0
- * version 1.0.0 2025-04-17 Joao - Versão inicial
- * version 1.1.0 2025-04-02 kkossev - pequenas melhorias
+ * version 1.0.0 2025-04-17 Joao - Initial version
+ * version 1.1.0 2025-04-02 kkossev - Small improvements
+ * version 1.1.1 2025-05-19 Joao - Translation to English
  */
 
 import groovy.transform.Field
@@ -26,7 +27,7 @@ import groovy.json.JsonOutput
 import hubitat.zigbee.zcl.DataType
 
 /**
- * Definição do driver com capabilities e atributos
+ * Driver definition with capabilities and attributes
  */
 metadata {
     definition(
@@ -35,23 +36,23 @@ metadata {
         author: "Manus",
         importUrl: "https://raw.githubusercontent.com/joaomf/hubitat/refs/heads/master/Shelly%201PM%20Gen%204%20Zigbee%20Driver.groovy"
     ) {
-        // Capabilities básicas
-        capability "Actuator"        // Permite que o dispositivo seja controlado
-        capability "Switch"          // Suporte para ligar/desligar
-        capability "Refresh"         // Permite atualizar manualmente os valores
-        capability "Configuration"   // Permite configurar o dispositivo
+        // Basic capabilities
+        capability "Actuator"        // Allows the device to be controlled
+        capability "Switch"          // On/off support
+        capability "Refresh"         // Allows you to manually update the values
+        capability "Configuration"   // Allows you to configure the device
         
-        // Capabilities para medição de energia
-        capability "PowerMeter"        // Para medição de potência (W)
-        capability "VoltageMeasurement" // Para medição de tensão (V)
-        capability "CurrentMeter"      // Para medição de corrente (A)
-        capability "EnergyMeter"       // Para medição de energia (kWh)
+        // Capabilities for energy measurement
+        capability "PowerMeter"        // For power measurement (W)
+        capability "VoltageMeasurement" // For voltage measurement (V)
+        capability "CurrentMeter"      // For current measurement (A)
+        capability "EnergyMeter"       // For energy measurement (kWh)
         
-        // Atributos personalizados
-        attribute "acFrequency", "number" // Para frequência AC (Hz)
-        attribute "producedEnergy", "number" // Para energia produzida (kWh)
+        // Custom attributes
+        attribute "acFrequency", "number" // For AC frequency (Hz)
+        attribute "producedEnergy", "number" // For energy produced (kWh)
         
-        // Fingerprint do dispositivo
+        // Device fingerprint
         fingerprint profileId: "0104", 
                     inClusters: "0000,0003,0004,0005,0006,0B04,0702", 
                     outClusters: "0019", 
@@ -61,30 +62,30 @@ metadata {
     }
     
     /**
-     * Preferências configuráveis pelo usuário
+     * User configurable preferences
      */
     preferences {
-        input name: "logEnable", type: "bool", title: "Habilitar logs de depuração", defaultValue: false
-        input name: "txtEnable", type: "bool", title: "Habilitar logs de texto", defaultValue: true
+        input name: "logEnable", type: "bool", title: "Enable debug logs", defaultValue: false
+        input name: "txtEnable", type: "bool", title: "Enable text logs", defaultValue: true
         
-        // Configurações de relatórios
-        input name: "reportingInterval", type: "number", title: "Intervalo de relatórios (segundos)", defaultValue: 60, range: "10..3600"
+        // Report settings
+        input name: "reportingInterval", type: "number", title: "Report interval (seconds)", defaultValue: 60, range: "10..3600"
         
-        // Configurações de calibração
-        input name: "powerCalibration", type: "decimal", title: "Calibração de potência (%)", defaultValue: 0
-        input name: "voltageCalibration", type: "decimal", title: "Calibração de tensão (%)", defaultValue: 0
-        input name: "currentCalibration", type: "decimal", title: "Calibração de corrente (%)", defaultValue: 0
-        input name: "acFrequencyCalibration", type: "decimal", title: "Calibração de frequência AC (offset)", defaultValue: 0
+        // Calibration settings
+        input name: "powerCalibration", type: "decimal", title: "Power calibration (%)", defaultValue: 0
+        input name: "voltageCalibration", type: "decimal", title: "Voltage calibration (%)", defaultValue: 0
+        input name: "currentCalibration", type: "decimal", title: "Current calibration (%)", defaultValue: 0
+        input name: "acFrequencyCalibration", type: "decimal", title: "AC frequency calibration (offset)", defaultValue: 0
     }
 }
 
-// Constantes para clusters Zigbee
+// Constants for Zigbee clusters
 @Field static final Integer CLUSTER_BASIC = 0x0000
 @Field static final Integer CLUSTER_ON_OFF = 0x0006
 @Field static final Integer CLUSTER_SIMPLE_METERING = 0x0702
 @Field static final Integer CLUSTER_ELECTRICAL_MEASUREMENT = 0x0B04
 
-// Constantes para atributos
+// Constants for attributes
 @Field static final Integer ATTR_ON_OFF = 0x0000
 @Field static final Integer ATTR_PRESENT_VALUE = 0x0055
 @Field static final Integer ATTR_ACTIVE_POWER = 0x050B
@@ -95,7 +96,7 @@ metadata {
 @Field static final Integer ATTR_ENERGY_PRODUCED = 0x0001
 @Field static final Integer ATTR_POWER_FACTOR = 0x0510
 
-// Constantes para divisores
+// Constants for dividers
 @Field static final Integer DIVISOR_POWER = 100
 @Field static final Integer DIVISOR_VOLTAGE = 100
 @Field static final Integer DIVISOR_CURRENT = 100
@@ -103,140 +104,140 @@ metadata {
 @Field static final Integer DIVISOR_ENERGY = 1000000
 
 /**
- * Método chamado quando o dispositivo é instalado
+ * Method called when the device is installed
  */
 def installed() {
-    logDebug "Instalado"
+    logDebug "Installed"
     initialize()
 }
 
 /**
- * Método chamado quando as configurações do dispositivo são atualizadas
+ * Method called when device settings are updated
  */
 def updated() {
-    logDebug "Atualizado"
+    logDebug "Updated"
     initialize()
 }
 
 /**
- * Inicializa o dispositivo e configura os relatórios
+ * Initializes the device and configures the reports
  */
 def initialize() {
-    logDebug "Inicializando"
+    logDebug "Initializing"
     unschedule()
     
     if (logEnable) {
-        runIn(1800, "logsOff")  // Desativa logs de depuração após 30 minutos
+        runIn(1800, "logsOff")  // Disables debug logs after 30 minutes
     }
     
-    // Configurar relatórios
+    // Configure reports
     configure()
 }
 
 /**
- * Desativa os logs de depuração
+ * Disables debugging logs
  */
 def logsOff() {
-    log.warn "Logs de depuração desativados"
+    log.warn "Debug logs disabled"
     device.updateSetting("logEnable", [value: "false", type: "bool"])
 }
 
 /**
- * Configura os relatórios periódicos do dispositivo
- * @return Lista de comandos Zigbee para configuração
+ * Configures the device's periodic reports
+ * @return List of Zigbee commands for configuration
  */
 def configure() {
-    logDebug "Configurando relatórios periódicos"
+    logDebug "Configuring periodic reports"
     
     def interval = reportingInterval ? reportingInterval : 60
     def minInterval = 10
-    def maxInterval = interval as Integer //convertendo explicitamente para Integer
+    def maxInterval = interval as Integer //Explicitly converting to Integer
     
     def cmds = []
     
-    // Configurar relatório para estado on/off
+    // Configure report for on/off state
     cmds += zigbee.configureReporting(CLUSTER_ON_OFF, ATTR_ON_OFF, DataType.BOOLEAN, 0, maxInterval, 1)
     
-    // Configurar relatório para potência
+    // Configure report for power
     cmds += zigbee.configureReporting(CLUSTER_ELECTRICAL_MEASUREMENT, ATTR_ACTIVE_POWER, DataType.INT16, minInterval, maxInterval, 1)
     
-    // Configurar relatório para tensão
+    // Configure report for voltage
     cmds += zigbee.configureReporting(CLUSTER_ELECTRICAL_MEASUREMENT, ATTR_RMS_VOLTAGE, DataType.UINT16, minInterval, maxInterval, 1)
     
-    // Configurar relatório para corrente
+    // Set up report for current
     cmds += zigbee.configureReporting(CLUSTER_ELECTRICAL_MEASUREMENT, ATTR_RMS_CURRENT, DataType.UINT16, minInterval, maxInterval, 1)
     
-    // Configurar relatório para frequência AC
+    // Configure report for AC frequency
     cmds += zigbee.configureReporting(CLUSTER_ELECTRICAL_MEASUREMENT, ATTR_AC_FREQUENCY, DataType.UINT16, minInterval, maxInterval, 1)
     
-    // Configurar relatório para energia
+    // Set up report for energy
     cmds += zigbee.configureReporting(CLUSTER_SIMPLE_METERING, ATTR_ENERGY_DELIVERED, DataType.UINT48, minInterval, maxInterval, 1)
     cmds += zigbee.configureReporting(CLUSTER_SIMPLE_METERING, ATTR_ENERGY_PRODUCED, DataType.UINT48, minInterval, maxInterval, 1)
     
-    logDebug "Enviando comandos de configuração: ${cmds}"
+    logDebug "Sending configuration commands: ${cmds}"
     return cmds
 }
 
 /**
- * Atualiza manualmente os valores do dispositivo
- * @return Lista de comandos Zigbee para leitura de atributos
+ * Manually updates device values
+ * @return List of Zigbee commands for reading attributes
  */
 def refresh() {
-    logDebug "Atualizando valores"
+    logDebug "Updating values"
     
     def cmds = []
     
-    // Ler estado on/off
+    // Read on/off status
     cmds += zigbee.readAttribute(CLUSTER_ON_OFF, ATTR_ON_OFF)
     
-    // Ler potência
+    // Read power
     cmds += zigbee.readAttribute(CLUSTER_ELECTRICAL_MEASUREMENT, ATTR_ACTIVE_POWER)
     
-    // Ler tensão
+    // Read voltage
     cmds += zigbee.readAttribute(CLUSTER_ELECTRICAL_MEASUREMENT, ATTR_RMS_VOLTAGE)
     
-    // Ler corrente
+    // Read current
     cmds += zigbee.readAttribute(CLUSTER_ELECTRICAL_MEASUREMENT, ATTR_RMS_CURRENT)
     
-    // Ler frequência AC
+    // Read AC frequency
     cmds += zigbee.readAttribute(CLUSTER_ELECTRICAL_MEASUREMENT, ATTR_AC_FREQUENCY)
     
-    // Ler energia
+    // Read energy
     cmds += zigbee.readAttribute(CLUSTER_SIMPLE_METERING, ATTR_ENERGY_DELIVERED)
     cmds += zigbee.readAttribute(CLUSTER_SIMPLE_METERING, ATTR_ENERGY_PRODUCED)
     
-    logDebug "Enviando comandos de atualização: ${cmds}"
+    logDebug "Sending update commands: ${cmds}"
     return cmds
 }
 
 /**
- * Liga o dispositivo
- * @return Comando Zigbee para ligar
+ * Turn on the device
+ * @return Zigbee command to turn on
  */
 def on() {
-    logDebug "Ligando"
+    logDebug "Turning on"
     return zigbee.on()
 }
 
 /**
- * Desliga o dispositivo
- * @return Comando Zigbee para desligar
+ * Turn off the device
+ * @return Zigbee command to turn off
  */
 def off() {
-    logDebug "Desligando"
+    logDebug "Turning off"
     return zigbee.off()
 }
 
 /**
- * Processa mensagens Zigbee recebidas do dispositivo
- * @param description String contendo a descrição da mensagem Zigbee
+ * Processes Zigbee messages received from the device
+ * @param Description String containing the description of the Zigbee message
  * @return null
  */
 def parse(String description) {
-    logDebug "Recebido: ${description}"
+    logDebug "Received: ${description}"
     
     def descMap = zigbee.parseDescriptionAsMap(description)
-    logDebug "Mapa de descrição: ${descMap}"
+    logDebug "Description map: ${descMap}"
     
     if (descMap.cluster == "0006" && descMap.attrId == "0000") {
         // Processando estado on/off
@@ -253,104 +254,104 @@ def parse(String description) {
 }
 
 /**
- * Processa o estado do switch (on/off)
- * @param descMap Mapa contendo os dados do atributo
+ * Processes the state of the switch (on/off)
+ * @param descMap Map containing the attribute data
  */
 private void processSwitchState(Map descMap) {
     if (descMap.value == null) return
     
     def value = descMap.value == "01" ? "on" : "off"
-    logInfo "Estado do switch: ${value}"
+    logInfo "Switch state: ${value}"
     
     sendEvent(name: "switch", value: value)
 
 }
 
 /**
- * Processa medições elétricas (potência, tensão, corrente, frequência)
- * @param descMap Mapa contendo os dados do atributo
+ * Processes electrical measurements (power, voltage, current, frequency)
+ * @param descMap Map containing the attribute data
  */
 private void processElectricalMeasurement(Map descMap) {
     if (descMap.value == null) return
     
     String attrId = descMap.attrId
     Integer rawValue = Integer.parseInt(descMap.value, 16)
-    if (rawValue == null) return // Ignora valores nulos
+    if (rawValue == null) return // Ignores null values
     
     switch (attrId) {
-        case "050B": // Potência ativa
+        case "050B": // Active power
             BigDecimal powerDouble = new BigDecimal(rawValue).divide(new BigDecimal(DIVISOR_POWER), 2, BigDecimal.ROUND_HALF_UP)
             if (powerCalibration) {
                 powerDouble = powerDouble.multiply(new BigDecimal(1 + (powerCalibration / 100)))
             }
             String powerString = String.format("%.2f", powerDouble)
-            logInfo "Potência: ${powerString} W"
+            logInfo "Power: ${powerString} W"
             sendEvent(name: "power", value: powerString, unit: "W")
             break
             
-        case "0505": // Tensão RMS
+        case "0505": // RMS voltage
             BigDecimal voltageDouble = new BigDecimal(rawValue).divide(new BigDecimal(DIVISOR_VOLTAGE), 1, BigDecimal.ROUND_HALF_UP)
             if (voltageCalibration) {
                 voltageDouble = voltageDouble.multiply(new BigDecimal(1 + (voltageCalibration / 100)))
             }
             String voltageString = String.format("%.1f", voltageDouble)
-            logInfo "Tensão: ${voltageString} V"
+            logInfo "Voltage: ${voltageString} V"
             sendEvent(name: "voltage", value: voltageString, unit: "V")
             break
             
-        case "0508": // Corrente RMS
+        case "0508": // RMS current
             BigDecimal currentDouble = new BigDecimal(rawValue).divide(new BigDecimal(DIVISOR_CURRENT), 3, BigDecimal.ROUND_HALF_UP)
             if (currentCalibration) {
                 currentDouble = currentDouble.multiply(new BigDecimal(1 + (currentCalibration / 100)))
             }
             String currentString = String.format("%.3f", currentDouble)
-            logInfo "Corrente: ${currentString} A"
+            logInfo "Current: ${currentString} A"
             sendEvent(name: "amperage", value: currentString, unit: "A")
             break
             
-        case "0300": // Frequência AC
+        case "0300": // AC Frequency
             BigDecimal frequencyDouble = new BigDecimal(rawValue).divide(new BigDecimal(DIVISOR_FREQUENCY), 2, BigDecimal.ROUND_HALF_UP)
             if (acFrequencyCalibration) {
                 frequencyDouble = frequencyDouble.add(new BigDecimal(acFrequencyCalibration))
             }
             String frequencyString = String.format("%.2f", frequencyDouble)
-            logInfo "Frequência AC: ${frequencyString} Hz"
+            logInfo "AC Frequency: ${frequencyString} Hz"
             sendEvent(name: "acFrequency", value: frequencyString, unit: "Hz")
             break
     }
 }
 
 /**
- * Processa medições de energia (consumida e produzida)
- * @param descMap Mapa contendo os dados do atributo
+ * Processes energy measurements (consumed and produced)
+ * @param descMap Map containing the attribute data
  */
 private void processEnergyMeasurement(Map descMap) {
     if (descMap.value == null) return
     
     String attrId = descMap.attrId
     Long rawValue = Long.parseLong(descMap.value, 16)
-    if (rawValue == null) return // Ignora valores nulos
+    if (rawValue == null) return // Ignores null values
     
     switch (attrId) {
-        case "0000": // Energia entregue (consumida)
+        case "0000": // Energy delivered (consumed)
             BigDecimal energyDouble = new BigDecimal(rawValue).divide(new BigDecimal(DIVISOR_ENERGY), 3, BigDecimal.ROUND_HALF_UP)
             String energyString = String.format("%.3f", energyDouble)
-            logInfo "Energia consumida: ${energyString} kWh"
+            logInfo "Energy: ${energyString} kWh"
             sendEvent(name: "energy", value: energyString, unit: "kWh")
             break
             
-        case "0001": // Energia produzida
+        case "0001": // Energy produced
             BigDecimal producedEnergyDouble = new BigDecimal(rawValue).divide(new BigDecimal(DIVISOR_ENERGY), 3, BigDecimal.ROUND_HALF_UP)
             String producedEnergyString = String.format("%.3f", producedEnergyDouble)
-            logInfo "Energia produzida: ${producedEnergyString} kWh"
+            logInfo "Produced Energy: ${producedEnergyString} kWh"
             sendEvent(name: "producedEnergy", value: producedEnergyString, unit: "kWh")
             break
     }
 }
 
 /**
- * Registra mensagem de depuração se habilitado
- * @param msg Mensagem a ser registrada
+ * Registers debugging message if enabled
+ * @param msg Message to be registered
  */
 private void logDebug(String msg) {
     if (logEnable) {
@@ -359,8 +360,8 @@ private void logDebug(String msg) {
 }
 
 /**
- * Registra mensagem informativa se habilitado
- * @param msg Mensagem a ser registrada
+ * Register informative message if enabled
+ * @param msg Message to be registered
  */
 private void logInfo(String msg) {
     if (txtEnable) {
