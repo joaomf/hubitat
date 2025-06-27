@@ -14,10 +14,20 @@
  *
  *  Based on zigbee2mqtt external converter for Dometek Ceiling Fan:
  *  https://github.com/Koenkk/zigbee2mqtt/issues/26836
+ * version 1.0.0 2025-06-26 Joao - Initial version
  */
 
+static String version()   { '1.0.0' }
+static String timeStamp() { '2025/06/26 11:11 PM' }
+
+
 metadata {
-    definition (name: "Dometek Ceiling Fan", namespace: "manus-ai", author: "Manus AI") {
+    definition (
+        name: "Dometek Ceiling Fan", 
+        namespace: "manus-ai", 
+        author: "Manus AI",
+        importUrl: "https://raw.githubusercontent.com/joaomf/hubitat/refs/heads/master/Shelly%201PM%20Gen%204%20Zigbee%20Driver.groovy"
+    ) {
         capability "Switch"
         capability "SwitchLevel"
         capability "FanControl"
