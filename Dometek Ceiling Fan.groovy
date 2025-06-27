@@ -26,7 +26,7 @@ metadata {
         name: "Dometek Ceiling Fan", 
         namespace: "manus-ai", 
         author: "Manus AI",
-        importUrl: ""
+        importUrl: "https://raw.githubusercontent.com/joaomf/hubitat/refs/heads/master/Dometek%20Ceiling%20Fan.groovy"
     ) {
         capability "Switch"
         capability "SwitchLevel"
