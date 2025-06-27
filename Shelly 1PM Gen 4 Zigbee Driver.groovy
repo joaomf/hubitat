@@ -22,6 +22,9 @@
  * version 1.1.1 2025-05-19 Joao - Translation to English
  */
 
+static String version()   { '1.1.1' }
+static String timeStamp() { '2025/05/19 09:53 PM' }
+
 import groovy.transform.Field
 import groovy.json.JsonOutput
 import hubitat.zigbee.zcl.DataType
