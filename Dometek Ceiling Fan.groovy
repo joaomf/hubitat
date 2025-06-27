@@ -26,7 +26,7 @@ metadata {
         name: "Dometek Ceiling Fan", 
         namespace: "manus-ai", 
         author: "Manus AI",
-        importUrl: "https://raw.githubusercontent.com/joaomf/hubitat/refs/heads/master/Shelly%201PM%20Gen%204%20Zigbee%20Driver.groovy"
+        importUrl: ""
     ) {
         capability "Switch"
         capability "SwitchLevel"
