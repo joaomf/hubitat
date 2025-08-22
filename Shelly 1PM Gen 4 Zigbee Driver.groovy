@@ -21,11 +21,11 @@
  * version 1.1.0 2025-04-02 kkossev - Small improvements
  * version 1.1.1 2025-05-19 Joao - Translation to English
  * version 1.2.0 2025-08-21 kkossev - Shelly RPC cluster tests (Hubitat platform have a bug preventing the RPC cluster from working correctly)
- * version 1.2.1 2025-08-22 kkossev - (dev. branch) added wifiInfo; 
+ * version 1.2.1 2025-08-22 kkossev - added wifiInfo; added runRpcStateMachine()
   */
 
 static String version()   { '1.2.1' }
-static String timeStamp() { '2025/08/22 3:20 PM' }
+static String timeStamp() { '2025/08/22 5:35 PM' }
 
 import groovy.transform.Field
 import groovy.json.JsonOutput
