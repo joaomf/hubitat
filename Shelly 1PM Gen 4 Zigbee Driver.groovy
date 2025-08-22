@@ -21,10 +21,11 @@
  * version 1.1.0 2025-04-02 kkossev - Small improvements
  * version 1.1.1 2025-05-19 Joao - Translation to English
  * version 1.2.0 2025-08-21 kkossev - Shelly RPC cluster tests (Hubitat platform have a bug preventing the RPC cluster from working correctly)
+ * version 1.2.1 2025-08-22 kkossev - (dev. branch)
   */
 
-static String version()   { '1.2.0' }
-static String timeStamp() { '2025/08/21 5:17 PM' }
+static String version()   { '1.2.1' }
+static String timeStamp() { '2025/08/22 1:41 PM' }
 
 import groovy.transform.Field
 import groovy.json.JsonOutput
@@ -37,7 +38,7 @@ metadata {
     definition(
         name: "Shelly 1PM Gen 4 Zigbee Driver",
         namespace: "hubitat",
-        author: "Manus",
+        author: "Joao+Manus, kkossev+Claude :)",
         importUrl: "https://raw.githubusercontent.com/joaomf/hubitat/refs/heads/master/Shelly%201PM%20Gen%204%20Zigbee%20Driver.groovy"
     ) {
         // Basic capabilities
@@ -57,17 +58,18 @@ metadata {
         attribute "producedEnergy", "number" // For energy produced (kWh)
         attribute "inputMode", "string" // Current input mode
         attribute "rpcStatus", "string" // RPC communication status
-    attribute "rpcResponse", "string" // Last assembled RPC JSON response
+        attribute "rpcResponse", "string" // Last assembled RPC JSON response
         
         // Custom commands for input mode configuration
         command "setInputMode", [[name: "mode", type: "ENUM", constraints: ["momentary", "follow", "flip", "detached", "cycle", "activate"]]]
         command "getInputMode"
         
-    // Simple RPC test command
-    command "testSimpleRpcLong"
-    command "testRpcReadRxCtl"
-    command "testRpcReadRxData"
-    command "runRpcStateMachine"
+        // Simple RPC test command
+        command "testSimpleRpcLong"
+        command "testRpcReadRxCtl"
+        command "testRpcReadRxData"
+        command "runRpcStateMachine"
+    command "wifiInfo"
        
         // Device fingerprint
         fingerprint profileId: "0104", 
@@ -280,6 +282,8 @@ def parse(String description) {
         processEnergyMeasurement(descMap)
     } else if ((descMap.cluster in ["FC01", "fc01"]) || (descMap.clusterId in ["FC01", "fc01"]) || (descMap.clusterInt == CLUSTER_RPC)) {
         processRpcCluster(descMap)
+    } else if ((descMap.cluster in ["FC02", "fc02"]) || (descMap.clusterId in ["FC02", "fc02"]) || (descMap.clusterInt == 0xFC02)) {
+        processWifiCluster(descMap)
     }
     
     return null
@@ -717,6 +721,12 @@ private Integer getRpcMfgCode() {
     return MFG_SHELLY
 }
 
+// Little-endian hex helpers (accept boxed Integer to avoid runtime MissingMethodException)
+private static String hexLE16(Integer v) {
+    int iv = (v == null) ? 0 : v.intValue()
+    return String.format('%02X%02X', iv & 0xFF, (iv >> 8) & 0xFF)
+}
+
 private static String hexLE16(int v) {
     return String.format('%02X%02X', v & 0xFF, (v >> 8) & 0xFF)
 }
@@ -725,11 +735,486 @@ private static String hexLE32(int v) {
     return String.format('%02X%02X%02X%02X', v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, (v >> 24) & 0xFF)
 }
 
+/**
+ * ZCL sequence number helper.
+ * Keeps a small counter in state.zclSeq and returns next value 0..255.
+ */
 private int nextZclSeqNum() {
-    if (state.zclSeqNum == null) state.zclSeqNum = 1
-    int seq = state.zclSeqNum as int
-    state.zclSeqNum = (seq + 1) & 0xFF
-    return seq
+    try {
+        Integer cur = (state?.zclSeq instanceof Integer) ? (Integer) state.zclSeq : null
+        if (cur == null) cur = 0
+        cur = (cur + 1) & 0xFF
+        state.zclSeq = cur
+        return cur
+    } catch (Exception e) {
+        state.zclSeq = 1
+        return 1
+    }
+}
+
+/**
+ * Command: WiFi Info
+ * Reads common attributes from the Shelly WiFiSetupCluster (0xFC02)
+ * and logs values at info level.
+ */
+def wifiInfo() {
+    logInfo "🔎 Reading Shelly WiFiSetupCluster (0xFC02) attributes..."
+    def attrs = [
+        0x0000, // SSID
+        0x0001, // BSSID
+        0x0002, // Channel
+        0x0003, // RSSI
+        0x0004, // Security
+        0x0005, // IP
+        0x0006, // Mask
+        0x0007, // Gateway
+        0x0008, // DNS
+        0x0009, // MAC
+        0x000A, // DHCP
+        0x000B, // Status
+    ]
+    String dni = device.deviceNetworkId
+    String ep = String.format('%02X', EP_RPC)
+    String cluster = String.format('%04X', 0xFC02)
+    Integer mfgInt = getRpcMfgCode()
+    String profile = String.format('%04X', PROFILE_RPC)
+    String fc = '04'
+    String mfgLE = hexLE16(mfgInt)
+    def cmds = []
+    attrs.each { a ->
+        String attrName = wifiAttrName(String.format('%04X', a))
+        logDebug "Requesting WiFi attribute ${attrName} (0x${String.format('%04X', a)})"
+        String p = fc + mfgLE + String.format('%02X', nextZclSeqNum()) + '00' + hexLE16(a)
+        cmds += "he raw 0x${dni} 1 0x${ep} 0x${cluster} {${p}} {0x${profile}}"
+        // small delay between reads to be polite to the radio
+        cmds += "delay 80"
+    }
+    logInfo "Requesting ${attrs.size()} WiFi attributes: ${attrs.collect { wifiAttrName(String.format('%04X', it)) }.join(', ')}"
+    sendZigbeeCommands(cmds)
+}
+
+private void processWifiCluster(Map descMap) {
+    // Handle read responses for WiFiSetupCluster with catchall parsing and type-aware decoding
+    try {
+        if (!descMap) return
+        if (descMap.command == '04') {
+            // write attribute response
+            logDebug "WiFiSetupCluster write response: ${descMap}"
+            return
+        }
+
+        // If this is a catchall with data list, parse attribute records (attr LE, status, encoding, [len, payload])
+        if (!descMap.attrId && descMap.data instanceof List) {
+            List<String> d = (List<String>) descMap.data
+            int i = 0
+            while (i + 2 <= d.size()) {
+                // Attribute ID (LE) - first two bytes
+                if (i + 2 > d.size()) break
+                int attr = (Integer.parseInt(d[i + 1], 16) << 8) | Integer.parseInt(d[i], 16)
+                i += 2
+                if (i >= d.size()) break
+                int status = Integer.parseInt(d[i++], 16)
+                if (status != 0x00) {
+                    String statusMsg = ""
+                    switch (status) {
+                        case 0x86: statusMsg = "UNSUPPORTED_ATTRIBUTE"; break
+                        case 0x8F: statusMsg = "UNSUPPORTED_ATTRIBUTE"; break
+                        default: statusMsg = String.format("0x%02X", status); break
+                    }
+                    logDebug String.format("WiFiSetupCluster Read Attr attr=0x%04X status=%s", attr, statusMsg)
+                    continue
+                }
+                if (i >= d.size()) break
+                String enc = d[i++].toUpperCase()
+                String name = wifiAttrName(String.format('%04X', attr))
+                String pretty = ''
+                
+                // Process based on attribute ID using switch statement
+                switch (attr) {
+                    case 0x0000: // SSID
+                        pretty = processWifiStringAttribute(d, i, enc, "SSID")
+                        break
+                    case 0x0001: // BSSID  
+                        pretty = processWifiBssidAttribute(d, i, enc)
+                        break
+                    case 0x0002: // Channel
+                        pretty = processWifiNumericAttribute(d, i, enc, "Channel")
+                        break
+                    case 0x0003: // RSSI
+                        pretty = processWifiSignedAttribute(d, i, enc, "RSSI", "dBm")
+                        break
+                    case 0x0004: // Security
+                        pretty = processWifiSecurityAttribute(d, i, enc)
+                        break
+                    case 0x0005: // IP
+                        pretty = processWifiIpAttribute(d, i, enc)
+                        break
+                    case 0x0006: // Mask
+                        pretty = processWifiIpAttribute(d, i, enc)
+                        break
+                    case 0x0007: // Gateway
+                        pretty = processWifiIpAttribute(d, i, enc)
+                        break
+                    case 0x0008: // DNS
+                        pretty = processWifiIpAttribute(d, i, enc)
+                        break
+                    case 0x0009: // MAC
+                        pretty = processWifiMacAttribute(d, i, enc)
+                        break
+                    case 0x000A: // DHCP
+                        pretty = processWifiBooleanAttribute(d, i, enc, "DHCP")
+                        break
+                    case 0x000B: // Status
+                        pretty = processWifiStatusAttribute(d, i, enc)
+                        break
+                    default:
+                        pretty = processWifiGenericAttribute(d, i, enc)
+                        break
+                }
+                
+                // Skip to next attribute based on encoding type
+                i = skipAttributeData(d, i, enc)
+                
+                // Always log the result, even if empty
+                logInfo "WiFiSetupCluster [${name} / 0x${String.format('%04X', attr)}] -> ${pretty}"
+            }
+            return
+        }
+
+        // Non-catchall path: single attrId/value present
+        String attrId = descMap.attrId
+        String value = descMap.value
+        if (!attrId) {
+            logDebug "WiFiSetupCluster message without attrId: ${descMap}"
+            return
+        }
+        String name = wifiAttrName(attrId)
+        // Try to decode simple hex values
+        try {
+            if (value && value.length() > 0) {
+                String h = value.replaceAll('[^0-9A-Fa-f]', '')
+                if (h.length() % 2 != 0) h = '0' + h
+                byte[] raw = hubitat.helper.HexUtils.hexStringToByteArray(h)
+                String pretty
+                if (raw.length == 4) {
+                    pretty = raw.collect { (it & 0xFF).toString() }.join('.')
+                } else if (raw.length == 6) {
+                    pretty = raw.collect { String.format('%02X', it & 0xFF) }.join(':')
+                } else {
+                    try { pretty = new String(raw, 'UTF-8') } catch (Exception e) { pretty = hubitat.helper.HexUtils.byteArrayToHexString(raw) }
+                }
+                logInfo "WiFiSetupCluster [${name} / 0x${attrId}] -> ${pretty}"
+            }
+        } catch (Exception e) {
+            logWarn "processWifiCluster simple decode error: ${e.message} desc=${descMap}"
+        }
+    } catch (Exception e) {
+        logWarn "processWifiCluster error: ${e.message} desc=${descMap}"
+    }
+}
+
+/**
+ * Maps WiFi attribute IDs to human-readable names
+ */
+private String wifiAttrName(String attrId) {
+    switch (attrId?.toUpperCase()) {
+        case '0000': return 'SSID'
+        case '0001': return 'BSSID'
+        case '0002': return 'Channel'
+        case '0003': return 'RSSI'
+        case '0004': return 'Security'
+        case '0005': return 'IP'
+        case '0006': return 'Mask'
+        case '0007': return 'Gateway'
+        case '0008': return 'DNS'
+        case '0009': return 'MAC'
+        case '000A': return 'DHCP'
+        case '000B': return 'Status'
+        default: return "Unknown_${attrId}"
+    }
+}
+
+// Helper methods for processing different WiFi attribute types
+
+private String processWifiStringAttribute(List<String> d, int startIndex, String enc, String attrName) {
+    try {
+        byte[] bytes = extractAttributeBytes(d, startIndex, enc)
+        if (bytes.length == 0) {
+            logDebug "Empty ${attrName} attribute data (zero length)"
+            return "not configured"
+        }
+        String result = new String(bytes, 'UTF-8')
+        logDebug "${attrName} decoded: '${result}' (${bytes.length} bytes)"
+        return result
+    } catch (Exception e) {
+        logWarn "Error processing ${attrName} string attribute: ${e.message}"
+        return "error"
+    }
+}
+
+private String processWifiBssidAttribute(List<String> d, int startIndex, String enc) {
+    try {
+        byte[] bytes = extractAttributeBytes(d, startIndex, enc)
+        if (bytes.length == 6) {
+            return bytes.collect { String.format('%02X', it & 0xFF) }.join(':')
+        } else {
+            return new String(bytes, 'UTF-8')
+        }
+    } catch (Exception e) {
+        logWarn "Error processing BSSID attribute: ${e.message}"
+        return ""
+    }
+}
+
+private String processWifiNumericAttribute(List<String> d, int startIndex, String enc, String attrName) {
+    try {
+        byte[] bytes = extractAttributeBytes(d, startIndex, enc)
+        if (bytes.length == 1) {
+            return String.valueOf(bytes[0] & 0xFF)
+        } else if (bytes.length == 2) {
+            int value = (bytes[0] & 0xFF) | ((bytes[1] & 0xFF) << 8)
+            return String.valueOf(value)
+        } else {
+            return String.format('0x%02X', bytes[0] & 0xFF)
+        }
+    } catch (Exception e) {
+        logWarn "Error processing ${attrName} numeric attribute: ${e.message}"
+        return ""
+    }
+}
+
+private String processWifiSignedAttribute(List<String> d, int startIndex, String enc, String attrName, String unit) {
+    try {
+        byte[] bytes = extractAttributeBytes(d, startIndex, enc)
+        if (bytes.length == 1) {
+            int value = (bytes[0] & 0x80) != 0 ? (bytes[0] | 0xFFFFFF00) : (bytes[0] & 0xFF)
+            return "${value} ${unit}"
+        } else if (bytes.length == 2) {
+            int value = (bytes[0] & 0xFF) | ((bytes[1] & 0xFF) << 8)
+            if ((value & 0x8000) != 0) value |= 0xFFFF0000
+            return "${value} ${unit}"
+        } else {
+            return String.format('0x%02X', bytes[0] & 0xFF)
+        }
+    } catch (Exception e) {
+        logWarn "Error processing ${attrName} signed attribute: ${e.message}"
+        return ""
+    }
+}
+
+private String processWifiSecurityAttribute(List<String> d, int startIndex, String enc) {
+    try {
+        byte[] bytes = extractAttributeBytes(d, startIndex, enc)
+        if (bytes.length == 1) {
+            int secType = bytes[0] & 0xFF
+            switch (secType) {
+                case 0: return "Open"
+                case 1: return "WEP"
+                case 2: return "WPA"
+                case 3: return "WPA2"
+                case 4: return "WPA3"
+                default: return "Unknown (${secType})"
+            }
+        } else {
+            return new String(bytes, 'UTF-8')
+        }
+    } catch (Exception e) {
+        logWarn "Error processing Security attribute: ${e.message}"
+        return ""
+    }
+}
+
+private String processWifiIpAttribute(List<String> d, int startIndex, String enc) {
+    try {
+        byte[] bytes = extractAttributeBytes(d, startIndex, enc)
+        if (bytes.length == 0) {
+            return "not configured"
+        }
+        if (bytes.length == 4) {
+            String result = bytes.collect { (it & 0xFF).toString() }.join('.')
+            logDebug "IP decoded: '${result}' (${bytes.length} bytes)"
+            return result
+        } else {
+            String result = new String(bytes, 'UTF-8')
+            logDebug "IP as text: '${result}' (${bytes.length} bytes)"
+            return result
+        }
+    } catch (Exception e) {
+        logWarn "Error processing IP attribute: ${e.message}"
+        return "error"
+    }
+}
+
+private String processWifiMacAttribute(List<String> d, int startIndex, String enc) {
+    try {
+        byte[] bytes = extractAttributeBytes(d, startIndex, enc)
+        if (bytes.length == 0) {
+            return "not configured"
+        }
+        if (bytes.length == 6) {
+            String result = bytes.collect { String.format('%02X', it & 0xFF) }.join(':')
+            logDebug "MAC decoded: '${result}' (${bytes.length} bytes)"
+            return result
+        } else {
+            String result = new String(bytes, 'UTF-8')
+            logDebug "MAC as text: '${result}' (${bytes.length} bytes)"
+            return result
+        }
+    } catch (Exception e) {
+        logWarn "Error processing MAC attribute: ${e.message}"
+        return "error"
+    }
+}
+
+private String processWifiBooleanAttribute(List<String> d, int startIndex, String enc, String attrName) {
+    try {
+        byte[] bytes = extractAttributeBytes(d, startIndex, enc)
+        if (bytes.length == 0) {
+            return "not configured"
+        }
+        if (bytes.length == 1) {
+            boolean enabled = (bytes[0] & 0xFF) != 0
+            String result = enabled ? "Enabled" : "Disabled"
+            logDebug "${attrName} decoded: '${result}' (value=${bytes[0] & 0xFF})"
+            return result
+        } else {
+            String result = new String(bytes, 'UTF-8')
+            logDebug "${attrName} as text: '${result}' (${bytes.length} bytes)"
+            return result
+        }
+    } catch (Exception e) {
+        logWarn "Error processing ${attrName} boolean attribute: ${e.message}"
+        return "error"
+    }
+}
+
+private String processWifiStatusAttribute(List<String> d, int startIndex, String enc) {
+    try {
+        byte[] bytes = extractAttributeBytes(d, startIndex, enc)
+        if (bytes.length == 1) {
+            int status = bytes[0] & 0xFF
+            switch (status) {
+                case 0: return "Disconnected"
+                case 1: return "Connected"
+                case 2: return "Connecting"
+                case 3: return "Error"
+                default: return "Unknown (${status})"
+            }
+        } else {
+            return new String(bytes, 'UTF-8')
+        }
+    } catch (Exception e) {
+        logWarn "Error processing Status attribute: ${e.message}"
+        return ""
+    }
+}
+
+private String processWifiGenericAttribute(List<String> d, int startIndex, String enc) {
+    try {
+        byte[] bytes = extractAttributeBytes(d, startIndex, enc)
+        if (bytes.length == 0) return ""
+        if (bytes.length == 4) {
+            return bytes.collect { (it & 0xFF).toString() }.join('.')
+        } else if (bytes.length == 6) {
+            return bytes.collect { String.format('%02X', it & 0xFF) }.join(':')
+        } else {
+            try { 
+                return new String(bytes, 'UTF-8') 
+            } catch (Exception e) { 
+                return hubitat.helper.HexUtils.byteArrayToHexString(bytes) 
+            }
+        }
+    } catch (Exception e) {
+        logWarn "Error processing generic attribute: ${e.message}"
+        return ""
+    }
+}
+
+private byte[] extractAttributeBytes(List<String> d, int startIndex, String enc) {
+    int i = startIndex
+    switch (enc.toUpperCase()) {
+        case '41':
+        case '42': // 1-byte length
+            if (i >= d.size()) {
+                logDebug "extractAttributeBytes: No length byte available for enc=${enc}"
+                return new byte[0]
+            }
+            int l1 = Integer.parseInt(d[i++], 16)
+            //logDebug "extractAttributeBytes: enc=${enc} declared_length=${l1} available_data=${d.subList(i, d.size())}"
+            int remaining = d.size() - i
+            int avail = Math.max(0, Math.min(remaining, l1))
+            byte[] b1 = new byte[avail]
+            for (int k = 0; k < avail; k++) { 
+                b1[k] = (byte) Integer.parseInt(d[i + k], 16) 
+            }
+            if (avail < l1) {
+                logWarn "WiFiSetupCluster short chunk: declared=${l1} got=${avail}"
+            }
+            if (l1 == 0) {
+                logDebug "extractAttributeBytes: Zero-length attribute (device reported length=0)"
+            }
+            return b1
+        case '43':
+        case '44': // 2-byte length LE
+            if (i + 1 >= d.size()) {
+                logDebug "extractAttributeBytes: Not enough bytes for 2-byte length enc=${enc}"
+                return new byte[0]
+            }
+            int l2 = Integer.parseInt(d[i], 16) | (Integer.parseInt(d[i + 1], 16) << 8)
+            i += 2
+            //logDebug "extractAttributeBytes: enc=${enc} declared_length=${l2} available_data=${d.subList(i, d.size())}"
+            int remaining2 = d.size() - i
+            int avail2 = Math.max(0, Math.min(remaining2, l2))
+            byte[] b2 = new byte[avail2]
+            for (int k = 0; k < avail2; k++) { 
+                b2[k] = (byte) Integer.parseInt(d[i + k], 16) 
+            }
+            if (avail2 < l2) {
+                logWarn "WiFiSetupCluster short long-chunk: declared=${l2} got=${avail2}"
+            }
+            if (l2 == 0) {
+                logDebug "extractAttributeBytes: Zero-length attribute (device reported length=0)"
+            }
+            return b2
+        case '10': // Single byte value
+            if (i >= d.size()) {
+                logDebug "extractAttributeBytes: No data byte available for enc=${enc}"
+                return new byte[0]
+            }
+            //logDebug "extractAttributeBytes: enc=${enc} single_byte=${d[i]}"
+            return [(byte) Integer.parseInt(d[i], 16)] as byte[]
+        default:
+            // Unknown encoding: try to read one byte if available
+            //logDebug "extractAttributeBytes: Unknown encoding=${enc} trying single byte"
+            if (i >= d.size()) return new byte[0]
+            return [(byte) Integer.parseInt(d[i], 16)] as byte[]
+    }
+}
+
+private int skipAttributeData(List<String> d, int startIndex, String enc) {
+    int i = startIndex
+    switch (enc.toUpperCase()) {
+        case '41':
+        case '42': // 1-byte length
+            if (i >= d.size()) return i
+            int l1 = Integer.parseInt(d[i++], 16)
+            int remaining = d.size() - i
+            int avail = Math.max(0, Math.min(remaining, l1))
+            return i + avail
+        case '43':
+        case '44': // 2-byte length LE
+            if (i + 1 >= d.size()) return i
+            int l2 = Integer.parseInt(d[i], 16) | (Integer.parseInt(d[i + 1], 16) << 8)
+            i += 2
+            int remaining2 = d.size() - i
+            int avail2 = Math.max(0, Math.min(remaining2, l2))
+            return i + avail2
+        case '10': // Single byte
+            return i + 1
+        default:
+            // Unknown encoding: skip one byte if available
+            return (i < d.size()) ? i + 1 : i
+    }
 }
 
 void sendZigbeeCommands(ArrayList<String> cmd) {
@@ -741,69 +1226,48 @@ void sendZigbeeCommands(ArrayList<String> cmd) {
     sendHubCommand(allActions)
 }
 
-
 /**
- * Simple RPC test using long octet string (0x43) and extended polling
+ * Test function: sends a simple RPC request using long strings
  */
 def testSimpleRpcLong() {
-    logInfo "🧪 Testing simple RPC (long octet) communication..."
-    sendEvent(name: "rpcStatus", value: "TestingLong")
-    // Reset RPC response assembly state
-    state.rpcRxTargetLen = 0
-    state.rpcRxAccum = 0
-    state.rpcRxText = ""
+    try {
+        def jsonRequest = '{"jsonrpc":"2.0","id":1,"method":"Shelly.GetDeviceInfo"}'
+        byte[] requestBytes = jsonRequest.getBytes('UTF-8')
+        int n = requestBytes.length
+        String hexPayload = hubitat.helper.HexUtils.byteArrayToHexString(requestBytes)
+        
+        // UINT32 LE
+        String le32 = String.format('%02X%02X%02X%02X', n & 0xFF, (n >> 8) & 0xFF, (n >> 16) & 0xFF, (n >> 24) & 0xFF)
+        // Octet string 1-byte length (device expects 0x41 for attr 0x0000)
+        String len1 = String.format('%02X', n & 0xFF)
 
-    def jsonRequest = '{"jsonrpc":"2.0","id":1,"method":"Shelly.GetDeviceInfo"}'
-    byte[] requestBytes = jsonRequest.getBytes('UTF-8')
-    int n = requestBytes.length
-    String hexPayload = hubitat.helper.HexUtils.byteArrayToHexString(requestBytes)
-    // UINT32 LE
-    String le32 = String.format('%02X%02X%02X%02X', n & 0xFF, (n >> 8) & 0xFF, (n >> 16) & 0xFF, (n >> 24) & 0xFF)
-    // Octet string 1-byte length (device expects 0x41 for attr 0x0000)
-    String len1 = String.format('%02X', n & 0xFF)
+        logInfo "Sending test RPC (long): ${jsonRequest}"
 
-    logInfo "Sending test RPC (long): ${jsonRequest}"
+        String dni = device.deviceNetworkId
+        String ep = String.format('%02X', EP_RPC)
+        String cluster = String.format('%04X', CLUSTER_RPC)
+        Integer mfgInt = getRpcMfgCode()
+        String mfg = String.format('%04X', mfgInt)
+        String profile = String.format('%04X', PROFILE_RPC)
 
-    String dni = device.deviceNetworkId
-    String ep = String.format('%02X', EP_RPC)
-    String cluster = String.format('%04X', CLUSTER_RPC)
-    Integer mfgInt = getRpcMfgCode()
-    String mfg = String.format('%04X', mfgInt)
-    String profile = String.format('%04X', PROFILE_RPC)
+        logDebug "RPC (long) using mfg 0x${mfg}"
 
-    logDebug "RPC (long) using mfg 0x${mfg} (pref=${settings?.rpcMfgCodeHex ?: 'default'})"
-
-    def cmds = []
-    String fc = '04'
-    String mfgLE = hexLE16(mfgInt)
-    // Write TxCtl
-    String p1 = fc + mfgLE + String.format('%02X', nextZclSeqNum()) + '02' + hexLE16(ATTR_TX_CTL) + '23' + le32
-    cmds += "he raw 0x${dni} 1 0x${ep} 0x${cluster} {${p1}} {0x${profile}}"
-    // Give the device a brief moment to latch TxCtl before TxData
-    cmds += "delay 120"
-    // Write TxData as character string (0x42) to 0x0000
-    String p2 = fc + mfgLE + String.format('%02X', nextZclSeqNum()) + '02' + hexLE16(ATTR_TX_DATA_BASE) + '42' + len1 + hexPayload
-    cmds += "he raw 0x${dni} 1 0x${ep} 0x${cluster} {${p2}} {0x${profile}}"
-    /*
-    // Extended polling
-    cmds += "delay 800"
-    // Early peek at RxCtl once
-    String rx0 = fc + mfgLE + String.format('%02X', nextZclSeqNum()) + '00' + hexLE16(ATTR_RX_CTL)
-    cmds += "he raw 0x${dni} 1 0x${ep} 0x${cluster} {${rx0}} {0x${profile}}"
-    cmds += "delay 150"
-    // Read RX data repeatedly; interleave RxCtl every 4 reads
-    for (int j = 0; j < 3; j++) {
-        String rxd = fc + mfgLE + String.format('%02X', nextZclSeqNum()) + '00' + hexLE16(ATTR_RX_DATA_BASE)
-        cmds += "he raw 0x${dni} 1 0x${ep} 0x${cluster} {${rxd}} {0x${profile}}"
-        cmds += "delay 580"
-        if ((j % 4) == 3) {
-            String rx = fc + mfgLE + String.format('%02X', nextZclSeqNum()) + '00' + hexLE16(ATTR_RX_CTL)
-            cmds += "he raw 0x${dni} 1 0x${ep} 0x${cluster} {${rx}} {0x${profile}}"
-            cmds += "delay 180"
-        }
+        def cmds = []
+        String fc = '04'
+        String mfgLE = hexLE16(mfgInt)
+        // Write TxCtl
+        String p1 = fc + mfgLE + String.format('%02X', nextZclSeqNum()) + '02' + hexLE16(ATTR_TX_CTL) + '23' + le32
+        cmds += "he raw 0x${dni} 1 0x${ep} 0x${cluster} {${p1}} {0x${profile}}"
+        // Give the device a brief moment to latch TxCtl before TxData
+        cmds += "delay 120"
+        // Write TxData as character string (0x42) to 0x0000
+        String p2 = fc + mfgLE + String.format('%02X', nextZclSeqNum()) + '02' + hexLE16(ATTR_TX_DATA_BASE) + '42' + len1 + hexPayload
+        cmds += "he raw 0x${dni} 1 0x${ep} 0x${cluster} {${p2}} {0x${profile}}"
+        
+        sendZigbeeCommands(cmds)
+    } catch (Exception e) {
+        logWarn "testSimpleRpcLong error: ${e.message}"
     }
-    */
-    sendZigbeeCommands(cmds)
 }
 
 private void rpcAccumAppendText(String chunk) {
