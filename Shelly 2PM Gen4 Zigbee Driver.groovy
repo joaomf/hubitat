@@ -36,7 +36,7 @@ metadata {
         name: "Shelly 2PM Gen4 Zigbee Driver",
         namespace: "shelly",
         author: "Joao+Claude",
-        importUrl: "https://github.com/joaomf/hubitat/blob/90acfebd50c21a1997a1c37fee60debb463e593a/Shelly%202PM%20Gen4%20Zigbee%20Driver.groovy"
+        importUrl: "https://raw.githubusercontent.com/joaomf/hubitat/refs/heads/master/Shelly%202PM%20Gen4%20Zigbee%20Driver.groovy"
     ) {
         capability "Switch"
         capability "PowerMeter"
