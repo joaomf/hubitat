@@ -1,0 +1,355 @@
+/**
+ *  Shelly Flood Sensor Gen 4 (S4SN-0071A)
+ *  Zigbee Driver for Hubitat Elevation
+ *
+ *  Device: Shelly Flood Sensor Gen 4
+ *  Model: S4SN-0071A
+ *  Manufacturer: Shelly
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+ *  in compliance with the License. You may obtain a copy of the License at:
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software distributed under the License is distributed
+ *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
+ *  for the specific language governing permissions and limitations under the License.
+ *
+ *  Version: 2.0.4
+ *  Date: 2025-11-07
+ *  
+ *  Changelog:
+ *  v2.0.4 - CORREÇÃO CRÍTICA: Parsing manual de "zone status" com regex (parseDescriptionAsMap retornava vazio)
+ *  v2.0.3 - Corrigido parsing de "zone status" messages e eventos com isStateChange
+ *  v2.0.2 - Corrigido erro com zigbee.convertToInt() (usando Integer.parseInt())
+ *  v2.0.1 - Corrigido erro com zigbee.ATTRIBUTE_IAS_ZONE_STATUS (usando valor 0x0002)
+ *  v2.0.0 - Corrigido parsing do IAS Zone usando ZoneStatus class
+ *  v1.0.0 - Versão inicial
+ */
+
+import hubitat.zigbee.zcl.DataType
+import hubitat.zigbee.clusters.iaszone.ZoneStatus
+
+metadata {
+    definition (
+        name: "Shelly Flood Sensor Gen 4", 
+        namespace: "shelly", 
+        author: "Community Driver",
+        importUrl: "https://raw.githubusercontent.com/community/hubitat-drivers/main/shelly-flood-sensor-gen4.groovy"
+    ) {
+        capability "WaterSensor"
+        capability "Battery"
+        capability "TamperAlert"
+        capability "Sensor"
+        capability "Refresh"
+        capability "Configuration"
+        capability "HealthCheck"
+        
+        attribute "batteryLow", "enum", ["true", "false"]
+        attribute "tamper", "enum", ["detected", "clear"]
+        attribute "lastCheckin", "string"
+        
+        // Fingerprint para identificação automática do dispositivo
+        fingerprint profileId: "0104", 
+                    inClusters: "0000,0001,0003,0020,0500", 
+                    outClusters: "0019", 
+                    manufacturer: "Shelly", 
+                    model: "S4SN-0071A", 
+                    deviceJoinName: "Shelly Flood Sensor Gen 4"
+    }
+    
+    preferences {
+        input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: true
+        input name: "txtEnable", type: "bool", title: "Enable description text logging", defaultValue: true
+    }
+}
+
+// Parse incoming device messages
+def parse(String description) {
+    if (logEnable) log.debug "parse: ${description}"
+    
+    def result = []
+    
+    // Update last checkin
+    sendEvent(name: "lastCheckin", value: new Date().format("yyyy-MM-dd HH:mm:ss"), displayed: false)
+    
+    // Check if it's a zone status notification
+    if (description?.startsWith('zone status')) {
+        result = parseIasMessage(description)
+    } 
+    else if (description?.startsWith('zone report')) {
+        result = parseIasMessage(description)
+    }
+    else {
+        def descMap = zigbee.parseDescriptionAsMap(description)
+        
+        if (logEnable) log.debug "descMap: ${descMap}"
+        
+        if (descMap?.clusterInt == zigbee.POWER_CONFIGURATION_CLUSTER) {
+            // Power Configuration Cluster (Battery) - 0x0001
+            result = parseBatteryMessage(descMap)
+        } 
+        else if (descMap?.clusterInt == zigbee.IAS_ZONE_CLUSTER) {
+            // IAS Zone Cluster - 0x0500
+            if (descMap.attrInt == 0x0002) {
+                // Zone Status Attribute (0x0002)
+                ZoneStatus zs = new ZoneStatus(Integer.parseInt(descMap.value, 16))
+                result = parseZoneStatus(zs)
+            }
+            else if (descMap.command == "07") {
+                // Configure Reporting Response
+                if (logEnable) log.debug "IAS Zone configure reporting response: ${descMap.data}"
+            }
+        }
+        else if (descMap?.clusterInt == zigbee.BASIC_CLUSTER) {
+            // Basic Cluster - 0x0000
+            if (logEnable) log.debug "Basic cluster message: ${descMap}"
+        }
+    }
+    
+    return result
+}
+
+// Parse IAS Zone Status messages (zone status change notification)
+private parseIasMessage(String description) {
+    if (logEnable) log.debug "parseIasMessage: ${description}"
+    
+    def result = []
+    
+    // Manual parsing - the format is: "zone status 0x0001 -- extended status 0x00 ..."
+    // Extract the zone status value using regex
+    def match = description =~ /zone status (0x[0-9A-Fa-f]+)/
+    
+    if (match) {
+        def rawValue = match[0][1]  // Get the captured group (0x0001, 0x0000, etc)
+        if (logEnable) log.debug "Extracted zone status: ${rawValue}"
+        
+        // Remove 0x prefix and parse to integer
+        def hexValue = rawValue.replace("0x", "")
+        def zoneStatusInt = Integer.parseInt(hexValue, 16)
+        
+        if (logEnable) log.debug "Zone Status: ${zoneStatusInt} (${rawValue}), Binary: ${Integer.toBinaryString(zoneStatusInt).padLeft(16, '0')}"
+        
+        ZoneStatus zs = new ZoneStatus(zoneStatusInt)
+        result = parseZoneStatus(zs)
+    }
+    else {
+        // Fallback: try parseDescriptionAsMap for other formats
+        def descMap = zigbee.parseDescriptionAsMap(description)
+        
+        if (descMap?.value) {
+            def zoneStatusInt = Integer.parseInt(descMap.value, 16)
+            ZoneStatus zs = new ZoneStatus(zoneStatusInt)
+            result = parseZoneStatus(zs)
+        }
+        else if (descMap?.attrInt == 0x0002 && descMap?.clusterInt == 0x0500) {
+            def zoneStatusInt = Integer.parseInt(descMap.value, 16)
+            ZoneStatus zs = new ZoneStatus(zoneStatusInt)
+            result = parseZoneStatus(zs)
+        }
+        else {
+            if (logEnable) log.warn "Could not extract zone status from: ${description}"
+        }
+    }
+    
+    return result
+}
+
+// Parse ZoneStatus object
+private parseZoneStatus(ZoneStatus zs) {
+    def result = []
+    
+    if (logEnable) log.debug "ZoneStatus: alarm1=${zs.isAlarm1Set()}, alarm2=${zs.isAlarm2Set()}, tamper=${zs.isTamperSet()}, battery=${zs.isBatterySet()}"
+    
+    // Alarm1 = Water leak detection
+    def waterValue = zs.isAlarm1Set() ? "wet" : "dry"
+    result << createEvent(
+        name: "water", 
+        value: waterValue, 
+        isStateChange: true,
+        descriptionText: "Water is ${waterValue}"
+    )
+    if (txtEnable) log.info "Water: ${waterValue}"
+    
+    // Tamper detection
+    def tamperValue = zs.isTamperSet() ? "detected" : "clear"
+    result << createEvent(
+        name: "tamper", 
+        value: tamperValue,
+        isStateChange: true,
+        descriptionText: "Tamper is ${tamperValue}"
+    )
+    if (txtEnable) log.info "Tamper: ${tamperValue}"
+    
+    // Battery low from zone status
+    def batteryLowValue = zs.isBatterySet() ? "true" : "false"
+    result << createEvent(
+        name: "batteryLow", 
+        value: batteryLowValue,
+        isStateChange: true
+    )
+    if (logEnable) log.debug "Battery Low flag: ${batteryLowValue}"
+    
+    return result
+}
+
+// Parse battery messages
+private parseBatteryMessage(descMap) {
+    def result = []
+    
+    if (descMap.attrInt == 0x0020) {
+        // Battery Voltage (0x0020)
+        def rawValue = Integer.parseInt(descMap.value, 16)
+        def volts = rawValue / 10.0
+        def batteryPercent = getBatteryPercentage(volts)
+        
+        result << createEvent(
+            name: "battery", 
+            value: batteryPercent, 
+            unit: "%",
+            isStateChange: true,
+            descriptionText: "Battery is at ${batteryPercent}%"
+        )
+        
+        if (txtEnable) log.info "Battery: ${batteryPercent}% (${volts}V)"
+        
+        // Update battery low status
+        if (batteryPercent <= 15) {
+            result << createEvent(name: "batteryLow", value: "true", isStateChange: true)
+        } else {
+            result << createEvent(name: "batteryLow", value: "false", isStateChange: true)
+        }
+    }
+    else if (descMap.attrInt == 0x0021) {
+        // Battery Percentage Remaining (0x0021)
+        def rawValue = Integer.parseInt(descMap.value, 16)
+        def batteryPercent = rawValue / 2
+        
+        result << createEvent(
+            name: "battery", 
+            value: batteryPercent, 
+            unit: "%",
+            isStateChange: true,
+            descriptionText: "Battery is at ${batteryPercent}%"
+        )
+        
+        if (txtEnable) log.info "Battery: ${batteryPercent}%"
+        
+        // Update battery low status
+        if (batteryPercent <= 15) {
+            result << createEvent(name: "batteryLow", value: "true", isStateChange: true)
+        } else {
+            result << createEvent(name: "batteryLow", value: "false", isStateChange: true)
+        }
+    }
+    
+    return result
+}
+
+// Convert battery voltage to percentage
+private getBatteryPercentage(volts) {
+    def minVolts = 2.1
+    def maxVolts = 3.0
+    
+    if (volts >= maxVolts) return 100
+    if (volts <= minVolts) return 0
+    
+    def percentage = ((volts - minVolts) / (maxVolts - minVolts)) * 100
+    return Math.round(percentage)
+}
+
+// Called when the device is first installed
+def installed() {
+    log.info "installed()"
+    sendEvent(name: "water", value: "dry", displayed: false)
+    sendEvent(name: "tamper", value: "clear", displayed: false)
+    sendEvent(name: "battery", value: 100, unit: "%", displayed: false)
+    sendEvent(name: "batteryLow", value: "false", displayed: false)
+    sendEvent(name: "checkInterval", value: 2 * 60 * 60 + 2 * 60, displayed: false, 
+              data: [protocol: "zigbee", hubHardwareId: device.hub.hardwareID])
+    
+    runIn(3, configure)
+}
+
+// Called when device settings are changed
+def updated() {
+    log.info "updated()"
+    log.warn "debug logging is: ${logEnable == true}"
+    log.warn "description logging is: ${txtEnable == true}"
+    
+    if (logEnable) runIn(3600, logsOff)
+    
+    runIn(2, configure)
+}
+
+// Disable debug logging after 1 hour
+def logsOff() {
+    log.warn "debug logging disabled..."
+    device.updateSetting("logEnable", [value: "false", type: "bool"])
+}
+
+// Refresh device status
+def refresh() {
+    if (logEnable) log.debug "refresh()"
+    
+    def cmds = []
+    
+    // Read battery voltage
+    cmds += zigbee.readAttribute(zigbee.POWER_CONFIGURATION_CLUSTER, 0x0020)
+    
+    // Read battery percentage
+    cmds += zigbee.readAttribute(zigbee.POWER_CONFIGURATION_CLUSTER, 0x0021)
+    
+    // Read IAS Zone status (0x0002)
+    cmds += zigbee.readAttribute(zigbee.IAS_ZONE_CLUSTER, 0x0002)
+    
+    return cmds
+}
+
+// Configure the device
+def configure() {
+    log.info "configure()"
+    
+    def cmds = []
+    
+    // Write IAS CIE address (MUST be done first for IAS Zone enrollment)
+    String hubZigbeeEui = device.hub.zigbeeEui
+    if (logEnable) log.debug "Setting IAS CIE address to: ${hubZigbeeEui}"
+    cmds += zigbee.writeAttribute(zigbee.IAS_ZONE_CLUSTER, 0x0010, DataType.IEEE_ADDRESS, 
+                                  hubZigbeeEui, [:], 200)
+    
+    // Send IAS Zone enrollment response
+    cmds += zigbee.enrollResponse()
+    
+    // Read IAS Zone attributes
+    cmds += zigbee.readAttribute(zigbee.IAS_ZONE_CLUSTER, 0x0000) // ZoneState
+    cmds += zigbee.readAttribute(zigbee.IAS_ZONE_CLUSTER, 0x0001) // ZoneType
+    cmds += zigbee.readAttribute(zigbee.IAS_ZONE_CLUSTER, 0x0002) // ZoneStatus
+    cmds += zigbee.readAttribute(zigbee.IAS_ZONE_CLUSTER, 0x0010) // IAS CIE Address (verify)
+    
+    // Configure reporting for IAS Zone Status (0x0002)
+    // Parameters: cluster, attribute, datatype, minReportTime, maxReportTime, reportableChange
+    cmds += zigbee.configureReporting(zigbee.IAS_ZONE_CLUSTER, 0x0002, 
+                                      DataType.BITMAP16, 0, 3600, null)
+    
+    // Configure battery reporting
+    cmds += zigbee.configureReporting(zigbee.POWER_CONFIGURATION_CLUSTER, 0x0020, 
+                                      DataType.UINT8, 30, 21600, 0x01) // Battery voltage
+    cmds += zigbee.configureReporting(zigbee.POWER_CONFIGURATION_CLUSTER, 0x0021, 
+                                      DataType.UINT8, 30, 21600, 0x02) // Battery percentage
+    
+    // Read manufacturer and model
+    cmds += zigbee.readAttribute(zigbee.BASIC_CLUSTER, 0x0004) // Manufacturer name
+    cmds += zigbee.readAttribute(zigbee.BASIC_CLUSTER, 0x0005) // Model identifier
+    
+    // Refresh device state
+    cmds += refresh()
+    
+    return cmds
+}
+
+// Ping is used by Device-Watch
+def ping() {
+    if (logEnable) log.debug "ping()"
+    return zigbee.readAttribute(zigbee.POWER_CONFIGURATION_CLUSTER, 0x0020)
+}
