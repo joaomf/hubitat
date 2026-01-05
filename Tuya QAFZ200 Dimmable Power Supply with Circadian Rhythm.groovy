@@ -30,7 +30,7 @@ metadata {
         name: "Tuya QAFZ200 Dimmable Power Supply",
         namespace: "joao",
         author: "João",
-        importUrl: "https://raw.githubusercontent.com/..."
+        importUrl: "https://raw.githubusercontent.com/community/hubitat-drivers/main/..."
     ) {
         capability "Switch"
         capability "SwitchLevel"
